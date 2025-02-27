@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+    <class>PropertiesPanel</class>
+    <widget class="QDockWidget" name="PropertiesPanel">
+        <property name="geometry">
+            <rect>
+                <x>0</x>
+                <y>0</y>
+                <width>300</width>
+                <height>600</height>
+            </rect>
+        </property>
+        <property name="minimumSize">
+            <size>
+                <width>250</width>
+                <height>200</height>
+            </size>
+        </property>
+        <property name="windowTitle">
+            <string>属性</string>
+        </property>
+        <widget class="QWidget" name="dockWidgetContents">
+            <layout class="QVBoxLayout" name="verticalLayout">
+                <property name="leftMargin">
+                    <number>0</number>
+                </property>
+                <property name="topMargin">
+                    <number>0</number>
+                </property>
+                <property name="rightMargin">
+                    <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                    <number>0</number>
+                </property>
+                <item>
+                    <widget class="QScrollArea" name="scrollArea">
+                        <property name="widgetResizable">
+                            <bool>true</bool>
+                        </property>
+                        <widget class="QWidget" name="scrollAreaWidgetContents">
+                            <property name="geometry">
+                                <rect>
+                                    <x>0</x>
+                                    <y>0</y>
+                                    <width>298</width>
+                                    <height>578</height>
+                                </rect>
+                            </property>
+                            <layout class="QVBoxLayout" name="verticalLayout_2">
+                                <item>
+                                    <widget class="QStackedWidget" name="editorStack">
+                                        <property name="currentIndex">
+                                            <number>0</number>
+                                        </property>
+                                        <widget class="QWidget" name="emptyPage">
+                                            <layout class="QVBoxLayout" name="verticalLayout_3">
+                                                <item>
+                                                    <widget class="QLabel" name="label">
+                                                        <property name="text">
+                                                            <string>请选择一个元素以编辑其属性</string>
+                                                        </property>
+                                                        <property name="alignment">
+                                                            <set>Qt::AlignCenter</set>
+                                                        </property>
+                                                    </widget>
+                                                </item>
+                                                <item>
+                                                    <spacer name="verticalSpacer">
+                                                        <property name="orientation">
+                                                            <enum>Qt::Vertical</enum>
+                                                        </property>
+                                                        <property name="sizeHint" stdset="0">
+                                                            <size>
+                                                                <width>20</width>
+                                                                <height>40</height>
+                                                            </size>
+                                                        </property>
+                                                    </spacer>
+                                                </item>
+                                            </layout>
+                                        </widget>
+                                        <widget class="QWidget" name="commonPage">
+                                            <layout class="QVBoxLayout" name="verticalLayout_4">
+                                                <item>
+                                                    <widget class="QGroupBox" name="commonGroup">
+                                                        <property name="title">
+                                                            <string>通用属性</string>
+                                                        </property>
+                                                        <layout class="QFormLayout" name="formLayout">
+                                                            <item row="0" column="0">
+                                                                <widget class="QLabel" name="label_2">
+                                                                    <property name="text">
+                                                                        <string>名称:</string>
+                                                                    </property>
+                                                                </widget>
+                                                            </item>
+                                                            <item row="0" column="1">
+                                                                <widget class="QLineEdit" name="nameEdit"/>
+                                                            </item>
+                                                            <item row="1" column="0">
+                                                                <widget class="QLabel" name="label_3">
+                                                                    <property name="text">
+                                                                        <string>位置 (X,Y):</string>
+                                                                    </property>
+                                                                </widget>
+                                                            </item>
+                                                            <item row="1" column="1">
+                                                                <layout class="QHBoxLayout" name="horizontalLayout">
+                                                                    <item>
+                                                                        <widget class="QDoubleSpinBox" name="xPosSpinBox">
+                                                                            <property name="suffix">
+                                                                                <string> mm</string>
+                                                                            </property>
+                                                                            <property name="maximum">
+                                                                                <double>10000.000000000000000</double>
+                                                                            </property>
+                                                                        </widget>
+                                                                    </item>
+                                                                    <item>
+                                                                        <widget class="QDoubleSpinBox" name="yPosSpinBox">
+                                                                            <property name="suffix">
+                                                                                <string> mm</string>
+                                                                            </property>
+                                                                            <property name="maximum">
+                                                                                <double>10000.000000000000000</double>
+                                                                            </property>
+                                                                        </widget>
+                                                                    </item>
+                                                                </layout>
+                                                            </item>
+                                                            <item row="2" column="0">
+                                                                <widget class="QLabel" name="label_4">
+                                                                    <property name="text">
+                                                                        <string>大小 (宽,高):</string>
+                                                                    </property>
+                                                                </widget>
+                                                            </item>
+                                                            <item row="2" column="1">
+                                                                <layout class="QHBoxLayout" name="horizontalLayout_2">
+                                                                    <item>
+                                                                        <widget class="QDoubleSpinBox" name="widthSpinBox">
+                                                                            <property name="suffix">
+                                                                                <string> mm</string>
+                                                                            </property>
+                                                                            <property name="minimum">
+                                                                                <double>1.000000000000000</double>
+                                                                            </property>
+                                                                            <property name="maximum">
+                                                                                <double>10000.000000000000000</double>
+                                                                            </property>
+                                                                        </widget>
+                                                                    </item>
+                                                                    <item>
+                                                                        <widget class="QDoubleSpinBox" name="heightSpinBox">
+                                                                            <property name="suffix">
+                                                                                <string> mm</string>
+                                                                            </property>
+                                                                            <property name="minimum">
+                                                                                <double>1.000000000000000</double>
+                                                                            </property>
+                                                                            <property name="maximum">
+                                                                                <double>10000.000000000000000</double>
+                                                                            </property>
+                                                                        </widget>
+                                                                    </item>
+                                                                </layout>
+                                                            </item>
+                                                            <item row="3" column="0">
+                                                                <widget class="QLabel" name="label_5">
+                                                                    <property name="text">
+                                                                        <string>旋转:</string>
+                                                                    </property>
+                                                                </widget>
+                                                            </item>
+                                                            <item row="3" column="1">
+                                                                <widget class="QDoubleSpinBox" name="rotationSpinBox">
+                                                                    <property name="suffix">
+                                                                        <string> °</string>
+                                                                    </property>
+                                                                    <property name="maximum">
+                                                                        <double>359.990000000000009</double>
+                                                                    </property>
+                                                                </widget>
+                                                            </item>
+                                                            <item row="4" column="1">
+                                                                <widget class="QCheckBox" name="lockedCheckBox">
+                                                                    <property name="text">
+                                                                        <string>锁定</string>
+                                                                    </property>
+                                                                </widget>
+                                                            </item>
+                                                            <item row="5" column="1">
+                                                                <widget class="QCheckBox" name="visibleCheckBox">
+                                                                    <property name="text">
+                                                                        <string>可见</string>
+                                                                    </property>
+                                                                </widget>
+                                                            </item>
+                                                        </layout>
+                                                    </widget>
+                                                </item>
+                                                <item>
+                                                    <spacer name="verticalSpacer_2">
+                                                        <property name="orientation">
+                                                            <enum>Qt::Vertical</enum>
+                                                        </property>
+                                                        <property name="sizeHint" stdset="0">
+                                                            <size>
+                                                                <width>20</width>
+                                                                <height>40</height>
+                                                            </size>
+                                                        </property>
+                                                    </spacer>
+                                                </item>
+                                            </layout>
+                                        </widget>
+                                    </widget>
+                                </item>
+                            </layout>
+                        </widget>
+                    </widget>
+                </item>
+            </layout>
+        </widget>
+    </widget>
+    <resources/>
+    <connections/>
+</ui>
