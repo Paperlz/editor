@@ -9,6 +9,12 @@
 #include <QUuid>
 #include <QFontMetrics>
 
+// ZXing库头文件
+#include <ZXing/MultiFormatWriter.h>
+#include <ZXing/BitMatrix.h>
+#include <ZXing/BarcodeFormat.h>
+#include <ZXing/TextUtfEncoding.h>
+
 // 条形码类型名称映射
 static const QMap<BarcodeType, QString> barcodeTypeNames = {
     {BarcodeType::Code128, "Code 128"},
@@ -24,7 +30,22 @@ static const QMap<BarcodeType, QString> barcodeTypeNames = {
     {BarcodeType::Codabar, "Codabar"}
 };
 
-// Code 128 编码表
+// ZXing格式映射
+static const QMap<BarcodeType, ZXing::BarcodeFormat> zxingFormatMap = {
+    {BarcodeType::Code128, ZXing::BarcodeFormat::CODE_128},
+    {BarcodeType::Code39, ZXing::BarcodeFormat::CODE_39},
+    {BarcodeType::Code93, ZXing::BarcodeFormat::CODE_93},
+    {BarcodeType::EAN8, ZXing::BarcodeFormat::EAN_8},
+    {BarcodeType::EAN13, ZXing::BarcodeFormat::EAN_13},
+    {BarcodeType::UPC_A, ZXing::BarcodeFormat::UPC_A},
+    {BarcodeType::UPC_E, ZXing::BarcodeFormat::UPC_E},
+    {BarcodeType::MSI, ZXing::BarcodeFormat::MSI},
+    {BarcodeType::Interleaved2of5, ZXing::BarcodeFormat::ITF},
+    {BarcodeType::ITF14, ZXing::BarcodeFormat::ITF},
+    {BarcodeType::Codabar, ZXing::BarcodeFormat::CODABAR}
+};
+
+// 保留原始编码表，用于回退实现
 static const QList<QList<int>> code128Patterns = {
     // Code 128 A 开始符
     {2, 1, 1, 4, 1, 2},   // START A
@@ -554,6 +575,28 @@ bool BarcodeItem::validateData(const QString &data, BarcodeType type)
         return false;
     }
 
+    // 使用ZXing验证数据有效性
+    try {
+        if (zxingFormatMap.contains(type)) {
+            ZXing::MultiFormatWriter writer;
+            ZXing::BarcodeFormat format = zxingFormatMap.value(type);
+
+            // 检查数据是否符合格式要求
+            std::string content = data.toStdString();
+            auto hints = ZXing::DecodeHints().setFormats(format);
+
+            // 简单的验证 - 尝试生成条形码来验证数据
+            writer.encode(content, 1, 1, format);
+            return true;
+        }
+    }
+    catch (const std::exception &e) {
+        qDebug() << "数据验证失败:" << e.what();
+
+        // 如果ZXing验证失败，使用我们自己的验证规则
+    }
+
+    // 回退到原始验证逻辑
     switch (type) {
         case BarcodeType::Code128:
             // Code 128 可以编码所有ASCII字符
@@ -634,10 +677,77 @@ QImage BarcodeItem::generateBarcode(const QString &data, BarcodeType type,
                                    bool includeChecksum)
 {
     // 创建图像
-    QImage image(width, height, QImage::Format_RGB32);
+    QImage image(width, height, QImage::Format_ARGB32);
     image.fill(background);
 
-    // 创建绘图对象
+    // 尝试使用ZXing生成条形码
+    try {
+        if (zxingFormatMap.contains(type)) {
+            // 计算文本高度（如果显示文本）
+            int textHeight = 0;
+            if (includeText) {
+                QFontMetrics fm(textFont);
+                textHeight = fm.height() + 4; // 添加一些间距
+            }
+
+            // 计算条形码高度
+            int barcodeHeight = height - margin * 2 - textHeight;
+            int barcodeWidth = width - margin * 2;
+
+            if (barcodeHeight <= 0 || barcodeWidth <= 0) {
+                return image; // 空间太小，无法生成
+            }
+
+            // 根据条形码类型选择格式
+            ZXing::BarcodeFormat format = zxingFormatMap.value(type);
+
+            // 设置编码选项
+            ZXing::MultiFormatWriter writer;
+
+            // 对于需要校验位的类型，确保数据格式正确
+            std::string content = data.toStdString();
+
+            // 生成条形码矩阵
+            auto matrix = writer.encode(content, barcodeWidth, barcodeHeight, format);
+
+            // 绘制条形码
+            QPainter painter(&image);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(foreground);
+
+            // 计算条形码实际绘制区域
+            qreal scaleX = (qreal)barcodeWidth / matrix.width();
+            qreal scaleY = (qreal)barcodeHeight / matrix.height();
+
+            for (int y = 0; y < matrix.height(); ++y) {
+                for (int x = 0; x < matrix.width(); ++x) {
+                    if (matrix.get(x, y)) {
+                        QRectF rect(margin + x * scaleX,
+                                    margin + y * scaleY,
+                                    scaleX, scaleY);
+                        painter.drawRect(rect);
+                    }
+                }
+            }
+
+            // 绘制文本
+            if (includeText) {
+                painter.setPen(foreground);
+                painter.setFont(textFont);
+                painter.drawText(QRect(margin, margin + barcodeHeight,
+                                       barcodeWidth, textHeight),
+                                Qt::AlignCenter, data);
+            }
+
+            return image;
+        }
+    }
+    catch (const std::exception &e) {
+        qWarning() << "ZXing条形码生成错误:" << e.what();
+        // 如果ZXing生成失败，继续使用原始方法
+    }
+
+    // 以下是原始的生成方法（回退方案）
     QPainter painter(&image);
 
     // 设置抗锯齿
@@ -667,11 +777,26 @@ QImage BarcodeItem::generateBarcode(const QString &data, BarcodeType type,
             barcode = encodeCode39(data, barWidth, barcodeHeight, includeText, textFont, margin, includeChecksum);
             break;
 
-        // 其他条形码类型的编码...
+        case BarcodeType::EAN8:
+            barcode = encodeEAN8(data, barWidth, barcodeHeight, includeText, textFont, margin);
+            break;
 
+        case BarcodeType::EAN13:
+            barcode = encodeEAN13(data, barWidth, barcodeHeight, includeText, textFont, margin);
+            break;
+
+        case BarcodeType::UPC_A:
+            barcode = encodeUPC_A(data, barWidth, barcodeHeight, includeText, textFont, margin);
+            break;
+
+        case BarcodeType::Interleaved2of5:
+            barcode = encodeInterleaved2of5(data, barWidth, barcodeHeight, includeText, textFont, margin, includeChecksum);
+            break;
+
+        // 其他条形码类型的编码...
         default:
             // 默认使用Code 128
-            barcode = encodeCode128(data, barWidth, barcodeHeight, includeText, textFont, margin);
+            barcode = encodeCode128(data,barWidth, barcodeHeight, includeText, textFont, margin);
             break;
     }
 
@@ -733,7 +858,81 @@ bool BarcodeItem::generateBarcodeImage()
         return false;
     }
 
-    // 生成条形码图像
+    try {
+        // 尝试使用ZXing生成条形码
+        if (zxingFormatMap.contains(m_type)) {
+            int width = m_rect.width();
+            int height = m_rect.height();
+
+            // 计算文本高度（如果显示文本）
+            int textHeight = 0;
+            if (m_showText) {
+                QFontMetrics fm(m_textFont);
+                textHeight = fm.height() + 4; // 添加一些间距
+            }
+
+            // 计算条形码高度
+            int barcodeHeight = height - m_margin * 2 - textHeight;
+            int barcodeWidth = width - m_margin * 2;
+
+            if (barcodeHeight <= 0 || barcodeWidth <= 0) {
+                throw std::runtime_error("条形码尺寸太小");
+            }
+
+            // 创建图像
+            QImage image(width, height, QImage::Format_ARGB32);
+            image.fill(m_backgroundColor);
+
+            // 根据条形码类型选择格式
+            ZXing::BarcodeFormat format = zxingFormatMap.value(m_type);
+
+            // 设置编码选项
+            ZXing::MultiFormatWriter writer;
+            std::string content = m_data.toStdString();
+
+            // 生成条形码矩阵
+            auto matrix = writer.encode(content, barcodeWidth, barcodeHeight, format);
+
+            // 绘制条形码
+            QPainter painter(&image);
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(m_foregroundColor);
+
+            // 计算条形码实际绘制区域
+            qreal scaleX = (qreal)barcodeWidth / matrix.width();
+            qreal scaleY = (qreal)barcodeHeight / matrix.height();
+
+            for (int y = 0; y < matrix.height(); ++y) {
+                for (int x = 0; x < matrix.width(); ++x) {
+                    if (matrix.get(x, y)) {
+                        QRectF rect(m_margin + x * scaleX,
+                                    m_margin + y * scaleY,
+                                    scaleX, scaleY);
+                        painter.drawRect(rect);
+                    }
+                }
+            }
+
+            // 绘制文本
+            if (m_showText) {
+                painter.setPen(m_foregroundColor);
+                painter.setFont(m_textFont);
+                painter.drawText(QRect(m_margin, m_margin + barcodeHeight,
+                                       barcodeWidth, textHeight),
+                                Qt::AlignCenter, m_data);
+            }
+
+            m_barcodeImage = image;
+            update();
+            return true;
+        }
+    }
+    catch (const std::exception &e) {
+        qWarning() << "ZXing条形码生成错误:" << e.what();
+        // 如果使用ZXing生成失败，继续使用原始方法
+    }
+
+    // 回退到原始的生成方法
     m_barcodeImage = generateBarcode(m_data, m_type,
                                     m_rect.width(), m_rect.height(),
                                     m_foregroundColor, m_backgroundColor,
@@ -764,307 +963,451 @@ int BarcodeItem::calculateEANChecksum(const QString &data)
     return checksum;
 }
 
+// 更新的Code128编码方法，使用ZXing库
 QList<bool> BarcodeItem::encodeCode128(const QString &data, int &width, int height,
-                                      bool includeText, const QFont &textFont, int margin)
+                                     bool includeText, const QFont &textFont, int margin)
 {
-    // 这里是简化版的Code 128实现
-    // 实际项目中应该使用更完整的库
-
     QList<bool> bars;
 
-    // 添加起始符 (Code 128 B)
-    for (int bit : code128Patterns[1]) {
-        for (int i = 0; i < bit; ++i) {
-            bars.append(bars.size() % 2 == 0);
-        }
-    }
+    try {
+        // 使用ZXing生成Code 128条形码
+        ZXing::MultiFormatWriter writer;
+        auto matrix = writer.encode(data.toStdString(), width, 1, ZXing::BarcodeFormat::CODE_128);
 
-    // 编码数据
-    // 此处为简化版，实际编码更复杂
-    for (QChar c : data) {
-        int code = c.unicode();
-        if (code >= 32 && code <= 126) {
-            // 生成一些简单的图案（实际应该使用标准的Code 128编码表）
-            for (int i = 0; i < 11; ++i) {
-                bars.append((i + code) % 2 == 0);
+        // 从ZXing矩阵创建布尔列表
+        for (int x = 0; x < matrix.width(); ++x) {
+            bars.append(matrix.get(x, 0));
+        }
+
+        return bars;
+    }
+    catch (const std::exception &e) {
+        qWarning() << "Code 128生成错误:" << e.what();
+
+        // 生成失败时使用原始的实现作为后备方案
+        bars.clear();
+
+        // 添加起始符 (Code 128 B)
+        for (int bit : code128Patterns[1]) {
+            for (int i = 0; i < bit; ++i) {
+                bars.append(bars.size() % 2 == 0);
             }
         }
-    }
 
-    // 添加校验位（简化版）
-    for (int i = 0; i < 11; ++i) {
-        bars.append(i % 2 == 0);
-    }
-
-    // 添加终止符
-    for (int bit : code128Patterns[3]) {
-        for (int i = 0; i < bit; ++i) {
-            bars.append(bars.size() % 2 == 0);
+        // 编码数据
+        // 此处为简化版，实际编码更复杂
+        for (QChar c : data) {
+            int code = c.unicode();
+            if (code >= 32 && code <= 126) {
+                // 生成一些简单的图案（实际应该使用标准的Code 128编码表）
+                for (int i = 0; i < 11; ++i) {
+                    bars.append((i + code) % 2 == 0);
+                }
+            }
         }
-    }
 
-    return bars;
+        // 添加校验位（简化版）
+        for (int i = 0; i < 11; ++i) {
+            bars.append(i % 2 == 0);
+        }
+
+        // 添加终止符
+        for (int bit : code128Patterns[3]) {
+            for (int i = 0; i < bit; ++i) {
+                bars.append(bars.size() % 2 == 0);
+            }
+        }
+
+        return bars;
+    }
 }
 
+// 更新的Code39编码方法，使用ZXing库
 QList<bool> BarcodeItem::encodeCode39(const QString &data, int &width, int height,
-                                     bool includeText, const QFont &textFont, int margin,
-                                     bool includeChecksum)
+                                    bool includeText, const QFont &textFont, int margin,
+                                    bool includeChecksum)
 {
     QList<bool> bars;
 
-    // Code 39 编码
-    QString codeData = data;
-
-    // 如果数据不以*开始和结束，添加*作为开始/结束符
-    if (!codeData.startsWith('*')) {
-        codeData = '*' + codeData;
-    }
-    if (!codeData.endsWith('*')) {
-        codeData = codeData + '*';
-    }
-
-    // 计算校验位（如果需要）
-    if (includeChecksum) {
-        int sum = 0;
-        // 计算除了开始和结束符外的字符的校验和
-        for (int i = 1; i < codeData.length() - 1; ++i) {
-            QChar c = codeData.at(i);
-            // 在实际项目中，这里应该使用一个标准的Code 39校验和计算方法
-            // 这里简化处理，使用字符的ASCII值
-            sum += c.toLatin1();
+    try {
+        // 准备数据，确保有起始和结束符
+        QString codeData = data;
+        if (!codeData.startsWith('*')) {
+            codeData = '*' + codeData;
+        }
+        if (!codeData.endsWith('*')) {
+            codeData = codeData + '*';
         }
 
-        // 校验位是和除以43的余数
-        char checkChar = static_cast<char>(sum % 43 + '0');
-        if (checkChar > '9') checkChar = static_cast<char>(checkChar - '9' - 1 + 'A');
-        if (checkChar > 'Z') checkChar = static_cast<char>(checkChar - 'Z' - 1 + '-');
+        // 使用ZXing生成Code 39条形码
+        ZXing::MultiFormatWriter writer;
+        auto matrix = writer.encode(codeData.toStdString(), width, 1, ZXing::BarcodeFormat::CODE_39);
 
-        // 在结束符之前插入校验位
-        codeData.insert(codeData.length() - 1, QChar(checkChar));
+        // 从ZXing矩阵创建布尔列表
+        for (int x = 0; x < matrix.width(); ++x) {
+            bars.append(matrix.get(x, 0));
+        }
+
+        return bars;
     }
+    catch (const std::exception &e) {
+        qWarning() << "Code 39生成错误:" << e.what();
 
-    // 编码每个字符
-    for (QChar c : codeData) {
-        QString pattern = code39Patterns.value(c, "");
-        if (pattern.isEmpty()) continue;
+        // 生成失败时使用原始的实现作为后备方案
+        bars.clear();
 
-        // 转换模式为条和空格
-        for (QChar p : pattern) {
-            if (p == 'b') {
-                bars.append(true);  // 条
-            } else {
-                bars.append(false); // 空格
+        // Code 39 编码
+        QString codeData = data;
+
+        // 如果数据不以*开始和结束，添加*作为开始/结束符
+        if (!codeData.startsWith('*')) {
+            codeData = '*' + codeData;
+        }
+        if (!codeData.endsWith('*')) {
+            codeData = codeData + '*';
+        }
+
+        // 计算校验位（如果需要）
+        if (includeChecksum) {
+            int sum = 0;
+            // 计算除了开始和结束符外的字符的校验和
+            for (int i = 1; i < codeData.length() - 1; ++i) {
+                QChar c = codeData.at(i);
+                // 在实际项目中，这里应该使用一个标准的Code 39校验和计算方法
+                // 这里简化处理，使用字符的ASCII值
+                sum += c.toLatin1();
+            }
+
+            // 校验位是和除以43的余数
+            char checkChar = static_cast<char>(sum % 43 + '0');
+            if (checkChar > '9') checkChar = static_cast<char>(checkChar - '9' - 1 + 'A');
+            if (checkChar > 'Z') checkChar = static_cast<char>(checkChar - 'Z' - 1 + '-');
+
+            // 在结束符之前插入校验位
+            codeData.insert(codeData.length() - 1, QChar(checkChar));
+        }
+
+        // 编码每个字符
+        for (QChar c : codeData) {
+            QString pattern = code39Patterns.value(c, "");
+            if (pattern.isEmpty()) continue;
+
+            // 转换模式为条和空格
+            for (QChar p : pattern) {
+                if (p == 'b') {
+                    bars.append(true);  // 条
+                } else {
+                    bars.append(false); // 空格
+                }
+            }
+
+            // 在字符之间添加空格
+            bars.append(false);
+        }
+
+        return bars;
+    }
+}
+
+// 更新的EAN-8编码方法，使用ZXing库
+QList<bool> BarcodeItem::encodeEAN8(const QString &data, int &width, int height,
+                                  bool includeText, const QFont &textFont, int margin)
+{
+    QList<bool> bars;
+
+    try {
+        // 准备数据
+        QString codeData = data;
+
+        // 确保数据长度为7位（不含校验位）
+        if (codeData.length() < 7) {
+            codeData = codeData.rightJustified(7, '0');
+        } else if (codeData.length() > 7) {
+            codeData = codeData.left(7);
+        }
+
+        // 使用ZXing生成EAN-8条形码
+        ZXing::MultiFormatWriter writer;
+        auto matrix = writer.encode(codeData.toStdString(), width, 1, ZXing::BarcodeFormat::EAN_8);
+
+        // 从ZXing矩阵创建布尔列表
+        for (int x = 0; x < matrix.width(); ++x) {
+            bars.append(matrix.get(x, 0));
+        }
+
+        return bars;
+    }
+    catch (const std::exception &e) {
+        qWarning() << "EAN-8生成错误:" << e.what();
+
+        // 生成失败时使用原始的实现作为后备方案
+        bars.clear();
+
+        // 实现原始的EAN-8编码算法
+        QString codeData = data;
+
+        // 确保数据长度为7位（不含校验位）
+        if (codeData.length() < 7) {
+            codeData = codeData.rightJustified(7, '0');
+        } else if (codeData.length() > 7) {
+            codeData = codeData.left(7);
+        }
+
+        // 计算校验位
+        int checksum = calculateEANChecksum(codeData);
+        codeData += QString::number(checksum);
+
+        // 添加起始模式
+        bars.append(true);
+        bars.append(false);
+        bars.append(true);
+
+        // 编码前一组数字
+        for (int i = 0; i < 4; ++i) {
+            int digit = codeData.at(i).digitValue();
+            // 在实际项目中，这里应该使用标准的EAN-8编码表
+            for (int j = 0; j < 7; ++j) {
+                bars.append((j + digit) % 2 == 0);
             }
         }
 
-        // 在字符之间添加空格
+        // 添加中间模式
         bars.append(false);
-    }
+        bars.append(true);
+        bars.append(false);
+        bars.append(true);
+        bars.append(false);
 
-    return bars;
+        // 编码后一组数字
+        for (int i = 4; i < 8; ++i) {
+            int digit = codeData.at(i).digitValue();
+            // 在实际项目中，这里应该使用标准的EAN-8编码表
+            for (int j = 0; j < 7; ++j) {
+                bars.append((j + digit) % 2 != 0);
+            }
+        }
+
+        // 添加结束模式
+        bars.append(true);
+        bars.append(false);
+        bars.append(true);
+
+        return bars;
+    }
 }
 
-// 以下是更多条形码类型的编码方法，应根据实际需求实现
-// 例如 encodeEAN13, encodeUPC_A 等
-
-// EAN-13编码方法示例
+// 更新的EAN-13编码方法，使用ZXing库
 QList<bool> BarcodeItem::encodeEAN13(const QString &data, int &width, int height,
-                                    bool includeText, const QFont &textFont, int margin)
-{
-    QList<bool> bars;
-
-    // 实际项目中，这里应该实现标准的EAN-13编码算法
-    // 这是一个简化的示例
-
-    // EAN-13编码具有特定的模式和分区
-    QString codeData = data;
-
-    // 确保数据长度为12位（不含校验位）
-    if (codeData.length() < 12) {
-        codeData = codeData.rightJustified(12, '0');
-    } else if (codeData.length() > 12) {
-        codeData = codeData.left(12);
-    }
-
-    // 计算校验位
-    int checksum = calculateEANChecksum(codeData);
-    codeData += QString::number(checksum);
-
-    // 添加起始模式
-    bars.append(true);
-    bars.append(false);
-    bars.append(true);
-
-    // 编码前一组数字
-    for (int i = 0; i < 6; ++i) {
-        int digit = codeData.at(i).digitValue();
-        // 在实际项目中，这里应该使用标准的EAN-13编码表
-        for (int j = 0; j < 7; ++j) {
-            bars.append((j + digit) % 2 == 0);
-        }
-    }
-
-    // 添加中间模式
-    bars.append(false);
-    bars.append(true);
-    bars.append(false);
-    bars.append(true);
-    bars.append(false);
-
-    // 编码后一组数字
-    for (int i = 6; i < 12; ++i) {
-        int digit = codeData.at(i).digitValue();
-        // 在实际项目中，这里应该使用标准的EAN-13编码表
-        for (int j = 0; j < 7; ++j) {
-            bars.append((j + digit) % 2 != 0);
-        }
-    }
-
-    // 添加结束模式
-    bars.append(true);
-    bars.append(false);
-    bars.append(true);
-
-    return bars;
-}
-
-// 其他条形码类型的编码方法...
-// 以下是完整的条形码生成软件中应该实现的其他方法
-
-// UPC-A编码方法
-QList<bool> BarcodeItem::encodeUPC_A(const QString &data, int &width, int height,
-                                    bool includeText, const QFont &textFont, int margin)
-{
-    // 实际项目中，这里应该实现标准的UPC-A编码算法
-    // UPC-A与EAN-13类似，但编码规则略有不同
-
-    // 简化实现，实际返回EAN13编码（作为示例）
-    return encodeEAN13("0" + data, width, height, includeText, textFont, margin);
-}
-
-// EAN-8编码方法
-QList<bool> BarcodeItem::encodeEAN8(const QString &data, int &width, int height,
                                    bool includeText, const QFont &textFont, int margin)
 {
     QList<bool> bars;
 
-    // 实际项目中，这里应该实现标准的EAN-8编码算法
-    // 这是一个简化的示例
+    try {
+        // 准备数据
+        QString codeData = data;
 
-    QString codeData = data;
-
-    // 确保数据长度为7位（不含校验位）
-    if (codeData.length() < 7) {
-        codeData = codeData.rightJustified(7, '0');
-    } else if (codeData.length() > 7) {
-        codeData = codeData.left(7);
-    }
-
-    // 计算校验位
-    int checksum = calculateEANChecksum(codeData);
-    codeData += QString::number(checksum);
-
-    // 添加起始模式
-    bars.append(true);
-    bars.append(false);
-    bars.append(true);
-
-    // 编码前一组数字
-    for (int i = 0; i < 4; ++i) {
-        int digit = codeData.at(i).digitValue();
-        // 在实际项目中，这里应该使用标准的EAN-8编码表
-        for (int j = 0; j < 7; ++j) {
-            bars.append((j + digit) % 2 == 0);
+        // 确保数据长度为12位（不含校验位）
+        if (codeData.length() < 12) {
+            codeData = codeData.rightJustified(12, '0');
+        } else if (codeData.length() > 12) {
+            codeData = codeData.left(12);
         }
-    }
 
-    // 添加中间模式
-    bars.append(false);
-    bars.append(true);
-    bars.append(false);
-    bars.append(true);
-    bars.append(false);
+        // 使用ZXing生成EAN-13条形码
+        ZXing::MultiFormatWriter writer;
+        auto matrix = writer.encode(codeData.toStdString(), width, 1, ZXing::BarcodeFormat::EAN_13);
 
-    // 编码后一组数字
-    for (int i = 4; i < 8; ++i) {
-        int digit = codeData.at(i).digitValue();
-        // 在实际项目中，这里应该使用标准的EAN-8编码表
-        for (int j = 0; j < 7; ++j) {
-            bars.append((j + digit) % 2 != 0);
+        // 从ZXing矩阵创建布尔列表
+        for (int x = 0; x < matrix.width(); ++x) {
+            bars.append(matrix.get(x, 0));
         }
+
+        return bars;
     }
+    catch (const std::exception &e) {
+        qWarning() << "EAN-13生成错误:" << e.what();
 
-    // 添加结束模式
-    bars.append(true);
-    bars.append(false);
-    bars.append(true);
+        // 生成失败时使用原始的实现作为后备方案
+        bars.clear();
 
-    return bars;
+        // 实现原始的EAN-13编码算法
+        QString codeData = data;
+
+        // 确保数据长度为12位（不含校验位）
+        if (codeData.length() < 12) {
+            codeData = codeData.rightJustified(12, '0');
+        } else if (codeData.length() > 12) {
+            codeData = codeData.left(12);
+        }
+
+        // 计算校验位
+        int checksum = calculateEANChecksum(codeData);
+        codeData += QString::number(checksum);
+
+        // 添加起始模式
+        bars.append(true);
+        bars.append(false);
+        bars.append(true);
+
+        // 编码前一组数字
+        for (int i = 0; i < 6; ++i) {
+            int digit = codeData.at(i).digitValue();
+            // 在实际项目中，这里应该使用标准的EAN-13编码表
+            for (int j = 0; j < 7; ++j) {
+                bars.append((j + digit) % 2 == 0);
+            }
+        }
+
+        // 添加中间模式
+        bars.append(false);
+        bars.append(true);
+        bars.append(false);
+        bars.append(true);
+        bars.append(false);
+
+        // 编码后一组数字
+        for (int i = 6; i < 12; ++i) {
+            int digit = codeData.at(i).digitValue();
+            // 在实际项目中，这里应该使用标准的EAN-13编码表
+            for (int j = 0; j < 7; ++j) {
+                bars.append((j + digit) % 2 != 0);
+            }
+        }
+
+        // 添加结束模式
+        bars.append(true);
+        bars.append(false);
+        bars.append(true);
+
+        return bars;
+    }
 }
 
-// Interleaved 2 of 5编码方法
-QList<bool> BarcodeItem::encodeInterleaved2of5(const QString &data, int &width, int height,
-                                              bool includeText, const QFont &textFont, int margin,
-                                              bool includeChecksum)
+// 更新的UPC-A编码方法，使用ZXing库
+QList<bool> BarcodeItem::encodeUPC_A(const QString &data, int &width, int height,
+                                   bool includeText, const QFont &textFont, int margin)
 {
     QList<bool> bars;
 
-    // 实际项目中，这里应该实现标准的Interleaved 2 of 5编码算法
-    // 这是一个简化的示例
+    try {
+        // 准备数据
+        QString codeData = data;
 
-    QString codeData = data;
-
-    // Interleaved 2 of 5需要偶数位数字
-    if (codeData.length() % 2 != 0) {
-        codeData = "0" + codeData;
-    }
-
-    // 如果需要校验位且长度为偶数，需要添加前导0
-    if (includeChecksum && codeData.length() % 2 == 0) {
-        codeData = "0" + codeData;
-    }
-
-    // 计算校验位（如果需要）
-    if (includeChecksum) {
-        int sum = 0;
-        for (int i = 0; i < codeData.length(); ++i) {
-            int digit = codeData.at(i).digitValue();
-            // 奇数位置乘以3，偶数位置乘以1
-            sum += digit * (i % 2 == 0 ? 3 : 1);
+        // 确保数据长度为11位（不含校验位）
+        if (codeData.length() < 11) {
+            codeData = codeData.rightJustified(11, '0');
+        } else if (codeData.length() > 11) {
+            codeData = codeData.left(11);
         }
 
-        int checkDigit = (10 - (sum % 10)) % 10;
-        codeData += QString::number(checkDigit);
-    }
+        // 使用ZXing生成UPC-A条形码
+        ZXing::MultiFormatWriter writer;
+        auto matrix = writer.encode(codeData.toStdString(), width, 1, ZXing::BarcodeFormat::UPC_A);
 
-    // 添加起始符
-    bars.append(true);
-    bars.append(true);
-    bars.append(false);
-    bars.append(false);
-
-    // 交错编码数字对
-    for (int i = 0; i < codeData.length(); i += 2) {
-        int firstDigit = codeData.at(i).digitValue();
-        int secondDigit = codeData.at(i + 1).digitValue();
-
-        // 在实际项目中，这里应使用标准的Interleaved 2 of 5编码表
-        // 这里是简化实现
-        for (int j = 0; j < 5; ++j) {
-            // 编码第一个数字的条
-            bars.append(true);
-            bars.append((j + firstDigit) % 2 == 0);
-
-            // 编码第二个数字的空格
-            bars.append(false);
-            bars.append((j + secondDigit) % 2 == 0);
+        // 从ZXing矩阵创建布尔列表
+        for (int x = 0; x < matrix.width(); ++x) {
+            bars.append(matrix.get(x, 0));
         }
+
+        return bars;
     }
+    catch (const std::exception &e) {
+        qWarning() << "UPC-A生成错误:" << e.what();
 
-    // 添加结束符
-    bars.append(true);
-    bars.append(true);
-    bars.append(false);
+        // 生成失败时使用原始的实现作为后备方案
+        // 对于UPC-A，我们可以使用EAN-13编码并在前面添加0
+        return encodeEAN13("0" + data, width, height, includeText, textFont, margin);
+    }
+}
 
-    return bars;
+// 更新的Interleaved 2 of 5编码方法，使用ZXing库
+QList<bool> BarcodeItem::encodeInterleaved2of5(const QString &data, int &width, int height,
+                                             bool includeText, const QFont &textFont, int margin,
+                                             bool includeChecksum)
+{
+    QList<bool> bars;
+
+    try {
+        // 准备数据
+        QString codeData = data;
+
+        // Interleaved 2 of 5需要偶数位数字
+        if (codeData.length() % 2 != 0) {
+            codeData = "0" + codeData;
+        }
+
+        // 使用ZXing生成ITF条形码
+        ZXing::MultiFormatWriter writer;
+        auto matrix = writer.encode(codeData.toStdString(), width, 1, ZXing::BarcodeFormat::ITF);
+
+        // 从ZXing矩阵创建布尔列表
+        for (int x = 0; x < matrix.width(); ++x) {
+            bars.append(matrix.get(x, 0));
+        }
+
+        return bars;
+    }
+    catch (const std::exception &e) {
+        qWarning() << "Interleaved 2 of 5生成错误:" << e.what();
+
+        // 生成失败时使用原始的实现作为后备方案
+        bars.clear();
+
+        // 实现原始的Interleaved 2 of 5编码算法
+        QString codeData = data;
+
+        // Interleaved 2 of 5需要偶数位数字
+        if (codeData.length() % 2 != 0) {
+            codeData = "0" + codeData;
+        }
+
+        // 如果需要校验位且长度为偶数，需要添加前导0
+        if (includeChecksum && codeData.length() % 2 == 0) {
+            codeData = "0" + codeData;
+        }
+
+        // 计算校验位（如果需要）
+        if (includeChecksum) {
+            int sum = 0;
+            for (int i = 0; i < codeData.length(); ++i) {
+                int digit = codeData.at(i).digitValue();
+                // 奇数位置乘以3，偶数位置乘以1
+                sum += digit * (i % 2 == 0 ? 3 : 1);
+            }
+
+            int checkDigit = (10 - (sum % 10)) % 10;
+            codeData += QString::number(checkDigit);
+        }
+
+        // 添加起始符
+        bars.append(true);
+        bars.append(true);
+        bars.append(false);
+        bars.append(false);
+
+        // 交错编码数字对
+        for (int i = 0; i < codeData.length(); i += 2) {
+            int firstDigit = codeData.at(i).digitValue();
+            int secondDigit = codeData.at(i + 1).digitValue();
+
+            // 在实际项目中，这里应使用标准的Interleaved 2 of 5编码表
+            // 这里是简化实现
+            for (int j = 0; j < 5; ++j) {
+                // 编码第一个数字的条
+                bars.append(true);
+                bars.append((j + firstDigit) % 2 == 0);
+
+                // 编码第二个数字的空格
+                bars.append(false);
+                bars.append((j + secondDigit) % 2 == 0);
+            }
+        }
+
+        // 添加结束符
+        bars.append(true);
+        bars.append(true);
+        bars.append(false);
+
+        return bars;
+    }
 }

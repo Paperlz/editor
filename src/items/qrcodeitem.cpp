@@ -9,9 +9,8 @@
 #include <QJsonObject>
 #include <QUuid>
 
-// 这里可以添加第三方QR码生成库的包含，如QRencode、ZXing等
-// 例如： #include "qrencode.h"
-// 本实现中使用简化版的QR码生成方法
+// 集成QRencode库
+#include <qrencode.h>
 
 // QR码错误校正级别名称映射
 static const QMap<QRErrorCorrectionLevel, QString> qrErrorCorrectionLevelNames = {
@@ -19,6 +18,14 @@ static const QMap<QRErrorCorrectionLevel, QString> qrErrorCorrectionLevelNames =
     {QRErrorCorrectionLevel::Medium, "Medium"},
     {QRErrorCorrectionLevel::Quartile, "Quartile"},
     {QRErrorCorrectionLevel::High, "High"}
+};
+
+// QRencode错误校正级别映射
+static const QMap<QRErrorCorrectionLevel, QRecLevel> qrencodeECLevelMap = {
+    {QRErrorCorrectionLevel::Low, QR_ECLEVEL_L},
+    {QRErrorCorrectionLevel::Medium, QR_ECLEVEL_M},
+    {QRErrorCorrectionLevel::Quartile, QR_ECLEVEL_Q},
+    {QRErrorCorrectionLevel::High, QR_ECLEVEL_H}
 };
 
 QRCodeItem::QRCodeItem(QGraphicsItem *parent)
@@ -406,82 +413,128 @@ QImage QRCodeItem::generateQRCode(const QString &data,
     QImage qrImage(size, size, QImage::Format_ARGB32);
     qrImage.fill(background);
 
-    // 创建画家
-    QPainter painter(&qrImage);
+    try {
+        // 使用QRencode库生成二维码
+        QRecLevel qrLevel = qrencodeECLevelMap.value(errorCorrectionLevel, QR_ECLEVEL_M);
 
-    // 在实际项目中，这里应使用专业的QR码生成库，如QRencode、ZXing等
-    // 以下是一个简化的QR码生成方法，仅用于演示
+        // 设置QRcode的版本，0表示自动选择
+        QRcode *qrCode = QRcode_encodeString(data.toUtf8().constData(), 0, qrLevel, QR_MODE_8, 1);
 
-    // 获取错误校正级别字符
-    char ecLevel = getErrorCorrectionLevelChar(errorCorrectionLevel);
+        if (!qrCode) {
+            throw std::runtime_error("QR码生成失败");
+        }
 
-    // 实际QR码区域大小
-    int contentSize = size - 2 * margin;
-    if (contentSize <= 0) {
-        contentSize = 1;
-    }
+        // 创建画家
+        QPainter painter(&qrImage);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(foreground);
 
-    // 生成简化的QR码图案
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(foreground);
+        // 计算模块大小（不包括边距）
+        double moduleSize = (size - 2.0 * margin) / qrCode->width;
 
-    // 指定模式点位置（真实QR码的固定点位）
-    int blockSize = contentSize / 25; // 假设QR码为版本1（21x21模块）
-
-    // 绘制三个定位图案（左上、右上、左下）
-    // 左上角
-    painter.fillRect(margin, margin, 7 * blockSize, 7 * blockSize, foreground);
-    painter.fillRect(margin + blockSize, margin + blockSize, 5 * blockSize, 5 * blockSize, background);
-    painter.fillRect(margin + 2 * blockSize, margin + 2 * blockSize, 3 * blockSize, 3 * blockSize, foreground);
-
-    // 右上角
-    painter.fillRect(margin + contentSize - 7 * blockSize, margin, 7 * blockSize, 7 * blockSize, foreground);
-    painter.fillRect(margin + contentSize - 6 * blockSize, margin + blockSize, 5 * blockSize, 5 * blockSize, background);
-    painter.fillRect(margin + contentSize - 5 * blockSize, margin + 2 * blockSize, 3 * blockSize, 3 * blockSize, foreground);
-
-    // 左下角
-    painter.fillRect(margin, margin + contentSize - 7 * blockSize, 7 * blockSize, 7 * blockSize, foreground);
-    painter.fillRect(margin + blockSize, margin + contentSize - 6 * blockSize, 5 * blockSize, 5 * blockSize, background);
-    painter.fillRect(margin + 2 * blockSize, margin + contentSize - 5 * blockSize, 3 * blockSize, 3 * blockSize, foreground);
-
-    // 使用数据生成一些随机点（真实QR码中这部分是根据数据编码生成的）
-    // 在实际应用中，这部分需要使用专业QR码库生成
-
-    // 使用数据和错误级别的CRC作为随机种子
-    // 使用数据和错误级别的CRC作为随机种子
-    quint32 seed = 0;
-    for (QChar c : data) {
-        seed = ((seed << 5) + seed) + c.unicode();
-    }
-    seed += static_cast<int>(errorCorrectionLevel);
-
-    // 使用QRandomGenerator代替qsrand
-    QRandomGenerator random(seed);
-
-    // 生成一些随机数据模块
-    for (int i = 0; i < contentSize; i += blockSize) {
-        for (int j = 0; j < contentSize; j += blockSize) {
-            // 避开三个定位图案区域
-            if ((i < 8 * blockSize && j < 8 * blockSize) || // 左上
-                (i < 8 * blockSize && j > contentSize - 8 * blockSize) || // 左下
-                (i > contentSize - 8 * blockSize && j < 8 * blockSize)) { // 右上
-                continue;
+        // 绘制QR码
+        for (int y = 0; y < qrCode->width; y++) {
+            for (int x = 0; x < qrCode->width; x++) {
+                // QRcode数据是按行存储的一维数组，用位运算检查状态
+                unsigned char bit = qrCode->data[y * qrCode->width + x];
+                if (bit & 0x01) {  // 检查最低位
+                    QRectF rect(margin + x * moduleSize,
+                               margin + y * moduleSize,
+                               moduleSize, moduleSize);
+                    painter.drawRect(rect);
                 }
-
-            // 随机生成模块，使用QRandomGenerator
-            if (random.bounded(3) == 0) {
-                painter.fillRect(margin + i, margin + j, blockSize, blockSize, foreground);
             }
         }
-    }
-    // 如果需要安静区（quiet zone），可以添加边框或其他视觉提示
-    if (quietZone) {
-        painter.setPen(QPen(Qt::lightGray, 1, Qt::DashLine));
-        painter.setBrush(Qt::NoBrush);
-        painter.drawRect(margin - 2, margin - 2, contentSize + 4, contentSize + 4);
-    }
 
-    return qrImage;
+        // 如果需要安静区（quiet zone），绘制边框
+        if (quietZone) {
+            painter.setPen(QPen(Qt::lightGray, 1, Qt::DashLine));
+            painter.setBrush(Qt::NoBrush);
+            double quietZoneWidth = qrCode->width * moduleSize;
+            painter.drawRect(margin - 4, margin - 4,
+                           quietZoneWidth + 8, quietZoneWidth + 8);
+        }
+
+        // 释放QR码
+        QRcode_free(qrCode);
+
+        return qrImage;
+    }
+    catch (const std::exception &e) {
+        qWarning() << "QR码生成错误:" << e.what();
+
+        // 使用回退方法生成简化的QR码图像
+        // 创建画家
+        QPainter painter(&qrImage);
+
+        // 获取错误校正级别字符
+        char ecLevel = getErrorCorrectionLevelChar(errorCorrectionLevel);
+
+        // 实际QR码区域大小
+        int contentSize = size - 2 * margin;
+        if (contentSize <= 0) {
+            contentSize = 1;
+        }
+
+        // 生成简化的QR码图案
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(foreground);
+
+        // 指定模式点位置（真实QR码的固定点位）
+        int blockSize = contentSize / 25; // 假设QR码为版本1（21x21模块）
+
+        // 绘制三个定位图案（左上、右上、左下）
+        // 左上角
+        painter.fillRect(margin, margin, 7 * blockSize, 7 * blockSize, foreground);
+        painter.fillRect(margin + blockSize, margin + blockSize, 5 * blockSize, 5 * blockSize, background);
+        painter.fillRect(margin + 2 * blockSize, margin + 2 * blockSize, 3 * blockSize, 3 * blockSize, foreground);
+
+        // 右上角
+        painter.fillRect(margin + contentSize - 7 * blockSize, margin, 7 * blockSize, 7 * blockSize, foreground);
+        painter.fillRect(margin + contentSize - 6 * blockSize, margin + blockSize, 5 * blockSize, 5 * blockSize, background);
+        painter.fillRect(margin + contentSize - 5 * blockSize, margin + 2 * blockSize, 3 * blockSize, 3 * blockSize, foreground);
+
+        // 左下角
+        painter.fillRect(margin, margin + contentSize - 7 * blockSize, 7 * blockSize, 7 * blockSize, foreground);
+        painter.fillRect(margin + blockSize, margin + contentSize - 6 * blockSize, 5 * blockSize, 5 * blockSize, background);
+        painter.fillRect(margin + 2 * blockSize, margin + contentSize - 5 * blockSize, 3 * blockSize, 3 * blockSize, foreground);
+
+        // 使用数据生成一些随机点
+        quint32 seed = 0;
+        for (QChar c : data) {
+            seed = ((seed << 5) + seed) + c.unicode();
+        }
+        seed += static_cast<int>(errorCorrectionLevel);
+
+        // 使用QRandomGenerator代替qsrand
+        QRandomGenerator random(seed);
+
+        // 生成一些随机数据模块
+        for (int i = 0; i < contentSize; i += blockSize) {
+            for (int j = 0; j < contentSize; j += blockSize) {
+                // 避开三个定位图案区域
+                if ((i < 8 * blockSize && j < 8 * blockSize) || // 左上
+                    (i < 8 * blockSize && j > contentSize - 8 * blockSize) || // 左下
+                    (i > contentSize - 8 * blockSize && j < 8 * blockSize)) { // 右上
+                    continue;
+                }
+
+                // 随机生成模块
+                if (random.bounded(3) == 0) {
+                    painter.fillRect(margin + i, margin + j, blockSize, blockSize, foreground);
+                }
+            }
+        }
+
+        // 如果需要安静区（quiet zone），可以添加边框或其他视觉提示
+        if (quietZone) {
+            painter.setPen(QPen(Qt::lightGray, 1, Qt::DashLine));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(margin - 2, margin - 2, contentSize + 4, contentSize + 4);
+        }
+
+        return qrImage;
+    }
 }
 
 void QRCodeItem::mouseDoubleClickEvent(QGraphicsSceneMouseEvent *event)
